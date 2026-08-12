@@ -10,7 +10,11 @@ export function CodeView({ code }: CodeViewProps) {
 
   useEffect(() => {
     if (codeBlockRef.current) {
-      codeBlockRef.current.scrollTop = codeBlockRef.current.scrollHeight;
+      requestAnimationFrame(() => {
+        if (codeBlockRef.current) {
+          codeBlockRef.current.scrollTop = codeBlockRef.current.scrollHeight;
+        }
+      });
     }
   }, [code]);
 
