@@ -1,5 +1,10 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import type { GeneratedComponent, Provider } from '../types';
+import {
+  COMPONENTS_STORAGE_KEY,
+  serializeComponents,
+  deserializeComponents,
+} from '../utils/componentStorage';
 
 interface UseComponentGeneratorReturn {
   components: GeneratedComponent[];
@@ -11,9 +16,23 @@ interface UseComponentGeneratorReturn {
 }
 
 export function useComponentGenerator(): UseComponentGeneratorReturn {
-  const [components, setComponents] = useState<GeneratedComponent[]>([]);
+  const [components, setComponents] = useState<GeneratedComponent[]>(() => {
+    try {
+      return deserializeComponents(localStorage.getItem(COMPONENTS_STORAGE_KEY));
+    } catch {
+      return [];
+    }
+  });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(COMPONENTS_STORAGE_KEY, serializeComponents(components));
+    } catch {
+      // 용량 초과/프라이빗 모드 등 저장 실패는 무시 — 앱 동작에는 영향 없음
+    }
+  }, [components]);
 
   const generate = useCallback(async (prompt: string, apiKey: string | undefined, provider: Provider) => {
     setIsLoading(true);
