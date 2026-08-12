@@ -44,6 +44,7 @@ export function useComponentGenerator(): UseComponentGeneratorReturn {
       prompt,
       code: '',
       createdAt: new Date(),
+      isStreaming: true,
     };
 
     setComponents((prev) => [newComponent, ...prev]);
@@ -101,7 +102,7 @@ export function useComponentGenerator(): UseComponentGeneratorReturn {
               if (event.final) {
                 accumulatedCode = event.final;
                 setComponents((prev) =>
-                  prev.map((c) => (c.id === componentId ? { ...c, code: accumulatedCode } : c))
+                  prev.map((c) => (c.id === componentId ? { ...c, code: accumulatedCode, isStreaming: false } : c))
                 );
               }
             } catch (err) {

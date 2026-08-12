@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { GeneratedComponent } from '../types';
 import { LivePreview } from './LivePreview';
 import { CodeView } from './CodeView';
@@ -13,8 +13,16 @@ interface ComponentCardProps {
 type Tab = 'preview' | 'code';
 
 export function ComponentCard({ component, onRemove, onRegenerate, isLoading }: ComponentCardProps) {
-  const [activeTab, setActiveTab] = useState<Tab>('preview');
+  const [activeTab, setActiveTab] = useState<Tab>(component.isStreaming ? 'code' : 'preview');
   const [previewKey, setPreviewKey] = useState(0);
+
+  useEffect(() => {
+    if (component.isStreaming) {
+      setActiveTab('code');
+    } else {
+      setActiveTab('preview');
+    }
+  }, [component.isStreaming]);
   const createdAt = component.createdAt.toLocaleTimeString('ko-KR', {
     hour: '2-digit',
     minute: '2-digit',
