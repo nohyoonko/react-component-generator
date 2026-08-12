@@ -95,6 +95,83 @@ async function callAnthropic(prompt: string, apiKey: string): Promise<string> {
     .join('');
 }
 
+async function* callAnthropicStream(prompt: string, apiKey: string): AsyncGenerator<string> {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 4096,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: prompt }],
+      stream: true,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Claude API error: ${response.status}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error('Response body is not readable');
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines[lines.length - 1];
+
+      for (const line of lines.slice(0, -1)) {
+        if (line.startsWith('data: ')) {
+          const jsonStr = line.slice(6);
+          try {
+            const event = JSON.parse(jsonStr) as {
+              type?: string;
+              delta?: { type?: string; text?: string };
+            };
+
+            if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta.text) {
+              yield event.delta.text;
+            }
+          } catch {
+            // Skip malformed JSON
+          }
+        }
+      }
+    }
+
+    // Process remaining buffer
+    if (buffer.startsWith('data: ')) {
+      const jsonStr = buffer.slice(6);
+      try {
+        const event = JSON.parse(jsonStr) as {
+          type?: string;
+          delta?: { type?: string; text?: string };
+        };
+        if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta.text) {
+          yield event.delta.text;
+        }
+      } catch {
+        // Skip malformed JSON
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 async function callGoogleModel(prompt: string, apiKey: string, model: string): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
@@ -133,6 +210,107 @@ async function callGoogleModel(prompt: string, apiKey: string, model: string): P
 
 async function callGoogle(prompt: string, apiKey: string): Promise<string> {
   return withModelFallback(GOOGLE_MODELS, (model) => callGoogleModel(prompt, apiKey, model));
+}
+
+async function* callGoogleModelStream(prompt: string, apiKey: string, model: string): AsyncGenerator<string> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: { maxOutputTokens: 8192 },
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Gemini API error: ${response.status}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error('Response body is not readable');
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines[lines.length - 1];
+
+      for (const line of lines.slice(0, -1)) {
+        if (line.startsWith('data: ')) {
+          const jsonStr = line.slice(6);
+          try {
+            const event = JSON.parse(jsonStr) as {
+              candidates?: Array<{
+                content?: { parts: Array<{ text?: string }> };
+                finishReason?: string;
+              }>;
+            };
+
+            const candidate = event.candidates?.[0];
+            if (candidate?.finishReason === 'MAX_TOKENS') {
+              throw new Error('생성된 코드가 너무 길어 잘렸습니다. 더 간단한 컴포넌트를 요청해주세요.');
+            }
+
+            const text = candidate?.content?.parts?.map((part) => part.text).join('') ?? '';
+            if (text) {
+              yield text;
+            }
+          } catch (err) {
+            if (err instanceof Error && err.message.includes('생성된 코드가')) {
+              throw err;
+            }
+            // Skip malformed JSON
+          }
+        }
+      }
+    }
+
+    // Process remaining buffer
+    if (buffer.startsWith('data: ')) {
+      const jsonStr = buffer.slice(6);
+      try {
+        const event = JSON.parse(jsonStr) as {
+          candidates?: Array<{
+            content?: { parts: Array<{ text?: string }> };
+          }>;
+        };
+        const text = event.candidates?.[0]?.content?.parts?.map((part) => part.text).join('') ?? '';
+        if (text) {
+          yield text;
+        }
+      } catch {
+        // Skip malformed JSON
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function* callGoogleStream(prompt: string, apiKey: string): AsyncGenerator<string> {
+  let lastError: unknown;
+
+  for (const model of GOOGLE_MODELS) {
+    try {
+      yield* callGoogleModelStream(prompt, apiKey, model);
+      return;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw lastError;
 }
 
 const server = Bun.serve({
@@ -209,6 +387,66 @@ const server = Bun.serve({
           { error: message },
           { status: 500, headers: CORS_HEADERS }
         );
+      }
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/generate-stream') {
+      try {
+        const { prompt, apiKey, provider = 'anthropic' } = (await req.json()) as {
+          prompt: string;
+          apiKey?: string;
+          provider?: Provider;
+        };
+
+        const resolvedKey = resolveApiKey(provider, apiKey);
+
+        if (!resolvedKey) {
+          const body = JSON.stringify({
+            error: `API key is required. Set ${provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'GOOGLE_API_KEY'} in .env or enter it manually.`,
+          });
+          return new Response(body, { status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
+        }
+
+        if (!prompt) {
+          const body = JSON.stringify({ error: 'Prompt is required' });
+          return new Response(body, { status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
+        }
+
+        const stream = new ReadableStream<string>({
+          async start(controller) {
+            try {
+              let buffer = '';
+              const generator =
+                provider === 'google' ? callGoogleStream(prompt, resolvedKey) : callAnthropicStream(prompt, resolvedKey);
+
+              for await (const chunk of generator) {
+                buffer += chunk;
+                controller.enqueue(`data: ${JSON.stringify({ text: chunk })}\n\n`);
+              }
+
+              const finalCode = ensureRenderCall(stripCodeFences(buffer));
+              controller.enqueue(`data: ${JSON.stringify({ final: finalCode })}\n\n`);
+              controller.close();
+            } catch (err) {
+              const message = err instanceof Error ? err.message : 'Unknown error';
+              controller.enqueue(`data: ${JSON.stringify({ error: message })}\n\n`);
+              controller.close();
+            }
+          },
+        });
+
+        return new Response(stream, {
+          headers: {
+            ...CORS_HEADERS,
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          },
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        const body = JSON.stringify({ error: message });
+        return new Response(body, { status: 500, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
       }
     }
 

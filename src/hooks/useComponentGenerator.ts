@@ -38,30 +38,110 @@ export function useComponentGenerator(): UseComponentGeneratorReturn {
     setIsLoading(true);
     setError(null);
 
+    const componentId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const newComponent: GeneratedComponent = {
+      id: componentId,
+      prompt,
+      code: '',
+      createdAt: new Date(),
+    };
+
+    setComponents((prev) => [newComponent, ...prev]);
+
     try {
-      const res = await fetch('/api/generate', {
+      const res = await fetch('/api/generate-stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt, ...(apiKey && { apiKey }), provider }),
       });
 
-      const data = await res.json();
-
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to generate component');
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'Failed to generate component');
       }
 
-      const newComponent: GeneratedComponent = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        prompt,
-        code: data.code,
-        createdAt: new Date(),
-      };
+      const reader = res.body?.getReader();
+      if (!reader) {
+        throw new Error('Response body is not readable');
+      }
 
-      setComponents((prev) => [newComponent, ...prev]);
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let accumulatedCode = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines[lines.length - 1];
+
+        for (const line of lines.slice(0, -1)) {
+          if (line.startsWith('data: ')) {
+            const jsonStr = line.slice(6);
+            try {
+              const event = JSON.parse(jsonStr) as {
+                text?: string;
+                final?: string;
+                error?: string;
+              };
+
+              if (event.error) {
+                throw new Error(event.error);
+              }
+
+              if (event.text) {
+                accumulatedCode += event.text;
+                setComponents((prev) =>
+                  prev.map((c) => (c.id === componentId ? { ...c, code: accumulatedCode } : c))
+                );
+              }
+
+              if (event.final) {
+                accumulatedCode = event.final;
+                setComponents((prev) =>
+                  prev.map((c) => (c.id === componentId ? { ...c, code: accumulatedCode } : c))
+                );
+              }
+            } catch (err) {
+              if (err instanceof Error && err.message.includes('error')) {
+                throw err;
+              }
+              // Skip malformed JSON
+            }
+          }
+        }
+      }
+
+      // Process remaining buffer
+      if (buffer.startsWith('data: ')) {
+        const jsonStr = buffer.slice(6);
+        try {
+          const event = JSON.parse(jsonStr) as {
+            text?: string;
+            final?: string;
+            error?: string;
+          };
+
+          if (event.error) {
+            throw new Error(event.error);
+          }
+
+          if (event.final) {
+            accumulatedCode = event.final;
+            setComponents((prev) =>
+              prev.map((c) => (c.id === componentId ? { ...c, code: accumulatedCode } : c))
+            );
+          }
+        } catch {
+          // Skip malformed JSON
+        }
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       setError(message);
+      setComponents((prev) => prev.filter((c) => c.id !== componentId));
     } finally {
       setIsLoading(false);
     }

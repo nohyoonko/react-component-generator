@@ -22,3 +22,18 @@ export function ensureRenderCall(code: string): string {
   }
   return code;
 }
+
+/** SSE 라인(`data: {...}` 형식)을 파싱해 text 또는 error를 추출한다. */
+export function parseSseChunk(line: string): { data?: string; error?: string } {
+  if (!line.startsWith('data: ')) {
+    return {};
+  }
+
+  const jsonStr = line.slice(6);
+  try {
+    const obj = JSON.parse(jsonStr) as { text?: string; error?: string };
+    return { data: obj.text, error: obj.error };
+  } catch {
+    return { error: `JSON parse error: ${jsonStr}` };
+  }
+}
