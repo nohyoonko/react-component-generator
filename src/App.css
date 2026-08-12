@@ -660,9 +660,10 @@
 
 .code-block {
   min-height: 320px;
+  max-height: 500px;
   margin: 0;
   padding: 22px;
-  overflow-x: auto;
+  overflow: auto;
   background: #0f172a;
   color: #e2e8f0;
   font-family: 'SF Mono', 'Fira Code', Consolas, monospace;
