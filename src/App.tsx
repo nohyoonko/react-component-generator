@@ -30,8 +30,9 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (components.length > 0 && components[0]?.isStreaming) {
-      resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const firstComponent = components[0];
+    if (firstComponent?.isStreaming) {
+      window.scrollTo(0, document.body.scrollHeight);
     }
   }, [components]);
 
