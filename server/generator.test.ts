@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stripCodeFences, ensureRenderCall } from './generator';
+import { stripCodeFences, ensureRenderCall, parseSseChunk } from './generator';
 
 describe('stripCodeFences', () => {
   it('언어 태그가 붙은 코드펜스를 제거한다', () => {
@@ -36,5 +36,37 @@ describe('ensureRenderCall', () => {
   it('대문자로 시작하는 컴포넌트 선언이 없으면 원본을 그대로 반환한다', () => {
     const code = 'const value = 42;';
     expect(ensureRenderCall(code)).toBe(code);
+  });
+});
+
+describe('parseSseChunk', () => {
+  it('data 필드가 있는 SSE 라인을 파싱한다', () => {
+    const line = 'data: {"text":"const X"}';
+    const result = parseSseChunk(line);
+    expect(result.data).toBe('const X');
+  });
+
+  it('error 필드가 있는 SSE 라인을 파싱한다', () => {
+    const line = 'data: {"error":"API key invalid"}';
+    const result = parseSseChunk(line);
+    expect(result.error).toBe('API key invalid');
+  });
+
+  it('data 필드가 없는 라인은 undefined를 반환한다', () => {
+    const line = 'event: message';
+    const result = parseSseChunk(line);
+    expect(result.data).toBeUndefined();
+    expect(result.error).toBeUndefined();
+  });
+
+  it('빈 라인은 무시한다', () => {
+    const result = parseSseChunk('');
+    expect(result.data).toBeUndefined();
+  });
+
+  it('잘못된 JSON은 에러로 반환한다', () => {
+    const line = 'data: {invalid json}';
+    const result = parseSseChunk(line);
+    expect(result.error).toBeDefined();
   });
 });

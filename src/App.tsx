@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { PromptInput } from './components/PromptInput';
 import { ComponentCard } from './components/ComponentCard';
 import { useComponentGenerator } from './hooks/useComponentGenerator';
@@ -20,6 +20,7 @@ function App() {
   });
   const { components, isLoading, error, generate, removeComponent, clearAll } =
     useComponentGenerator();
+  const resultsRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     fetch('/api/config')
@@ -27,6 +28,12 @@ function App() {
       .then((data) => setEnvKeys(data.envKeys))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (components.length > 0 && components[0]?.isStreaming) {
+      resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [components]);
 
   const hasEnvKey = envKeys[provider];
 
@@ -127,7 +134,7 @@ function App() {
         </div>
       )}
 
-      <section className="results-section">
+      <section className="results-section" ref={resultsRef}>
         {components.length > 0 && (
           <div className="results-header">
             <div>
